@@ -1,0 +1,258 @@
+# Customer Churn Prediction — Predicción de Cancelación de Clientes
+
+Proyecto de Machine Learning end-to-end que predice si un cliente cancelará un
+servicio, como parte de un portafolio profesional de **Ingeniería en IA/ML y MLOps**.
+Incluye análisis de datos, entrenamiento de modelos, una API contenerizada y
+**desplegada en producción en AWS**.
+
+🔗 **API en vivo:** https://ch-3feaaa7b7cb14cf9802bcf6772cb2b1a.ecs.us-east-1.on.aws/docs
+
+## Objetivo del proyecto
+
+Anticipar qué clientes tienen alta probabilidad de cancelar un servicio (*churn*),
+para que una empresa pueda actuar a tiempo con estrategias de retención, en lugar
+de reaccionar después de que el cliente ya se fue.
+
+## Dataset
+
+- **Fuente:** Telco Customer Churn (IBM Sample Dataset, vía Kaggle)
+- **Tamaño original:** 7,043 clientes, 21 columnas
+- **Tamaño tras limpieza:** 7,032 clientes (se eliminaron 11 filas con datos faltantes)
+- **Variable objetivo:** `Churn` (Yes/No → 1/0)
+
+## Fase 1 — Análisis Exploratorio de Datos (EDA)
+
+📓 Notebook: [`notebooks/01_eda.ipynb`](notebooks/01_eda.ipynb)
+
+### Calidad de los datos
+- Se detectaron 11 valores faltantes en `TotalCharges` (venían como texto vacío
+  en lugar de números) y se eliminaron por representar menos del 0.2% del dataset.
+- No se encontraron filas duplicadas.
+
+### Distribución de la variable objetivo
+- **73.5%** de los clientes no cancelaron.
+- **26.5%** de los clientes sí cancelaron.
+- Desbalance de clases moderado, considerado en la fase de modelado.
+
+### Principales hallazgos
+- Los clientes con contrato **mes a mes** cancelan significativamente más que
+  los de contrato anual o bianual.
+- La cancelación es más frecuente en clientes **nuevos** (baja antigüedad).
+- Los clientes que pagan con **cheque electrónico** cancelan más que quienes
+  tienen pago automático.
+- Cargos mensuales más **altos** se asocian con mayor cancelación.
+- La falta de servicios adicionales (ej. soporte técnico) se asocia con mayor
+  cancelación.
+
+## Fase 2 — Entrenamiento y Evaluación del Modelo
+
+📓 Notebook: [`notebooks/02_training.ipynb`](notebooks/02_training.ipynb)
+
+### Preparación de datos
+- Codificación de variables categóricas mediante One-Hot Encoding.
+- Escalado de variables numéricas con `StandardScaler`.
+- División 80/20 en entrenamiento y prueba, estratificada por la variable objetivo.
+
+### Modelos evaluados
+
+| Métrica | Regresión Logística | Random Forest |
+|---|---|---|
+| Accuracy | 77.97% | 70.29% |
+| Precision | 69.75% | 46.60% |
+| **Recall** | 30.21% | **80.75%** |
+| F1-score | 42.16% | 59.10% |
+
+### Modelo elegido: Random Forest
+
+Se seleccionó **Random Forest** (con `class_weight='balanced'`) como modelo final,
+priorizando el **recall** sobre el accuracy general.
+
+**Justificación:** en un caso de negocio de retención de clientes, el costo de
+*no detectar* a un cliente que va a cancelar (falso negativo) suele ser mayor
+que el costo de contactar a un cliente que en realidad no iba a cancelar (falso
+positivo) — adquirir un cliente nuevo típicamente cuesta más que retener uno
+existente. Con un recall de 80.75%, el modelo detecta a 4 de cada 5 clientes en
+riesgo real de cancelación, frente a solo 3 de cada 10 con Regresión Logística.
+
+## Fase 3 — Construcción y Contenerización de la API
+
+📁 Código: [`api/`](api/)
+
+### Diseño de la API
+- Construida con **FastAPI**, expuesta en el puerto `8000`.
+- Endpoints:
+  - `GET /` — mensaje de bienvenida / verificación básica.
+  - `GET /health` — chequeo de salud (health check), usado por AWS en la Fase 4
+    para monitorear si el servicio sigue disponible.
+  - `POST /predict` — recibe los datos de un cliente y devuelve la predicción
+    de cancelación junto con su probabilidad.
+- Validación automática de los datos de entrada mediante `pydantic`, incluyendo
+  documentación interactiva autogenerada en `/docs` (Swagger UI).
+
+### Lógica de predicción (`predictor.py`)
+- Carga el modelo (`model.pkl`), el `scaler.pkl` y el orden de columnas
+  (`columnas.json`) una sola vez al iniciar la API.
+- Transforma los datos de un cliente nuevo aplicando el mismo proceso usado en
+  el entrenamiento: One-Hot Encoding, `reindex()` para garantizar las mismas
+  columnas en el mismo orden, y escalado con `StandardScaler`.
+- Devuelve tanto la clase predicha (cancela / no cancela) como la probabilidad,
+  permitiendo priorizar clientes según su nivel de riesgo en vez de una
+  decisión binaria.
+
+### Ejemplo de respuesta de la API
+
+```json
+{
+  "prediccion": 1,
+  "probabilidad": 0.5516
+}
+```
+
+### Contenerización con Docker
+- La API se empaquetó en una imagen Docker basada en `python:3.11-slim`,
+  incluyendo el modelo entrenado y todas sus dependencias.
+- Uso de `.dockerignore` para excluir archivos innecesarios de la imagen
+  (entornos virtuales, cache, archivos de git).
+- Verificada localmente con:
+  ```bash
+  docker build -t churn-prediction-api .
+  docker run -p 8000:8000 churn-prediction-api
+  ```
+
+## Fase 4 — Despliegue en AWS
+
+### Arquitectura de despliegue
+
+```
+[Imagen Docker local]
+        |
+        v
+[Amazon ECR]  <- almacena la imagen del contenedor
+        |
+        v
+[Amazon ECS - Express Mode]  <- ejecuta el contenedor, genera URL pública
+        |
+        v
+[Usuario / Cliente HTTP]  <- consume la API desde internet
+```
+
+### Decisión de arquitectura: por qué ECS Express Mode y no App Runner
+
+El plan original consideraba **AWS App Runner** por su simplicidad. Sin embargo,
+AWS dejó de aceptar cuentas nuevas en App Runner a partir del **30 de abril de
+2026**, y recomienda **Amazon ECS Express Mode** como sucesor para nuevos
+despliegues de contenedores. Express Mode ofrece una experiencia de despliegue
+igual de simple (un solo formulario: imagen, puerto, tamaño de recursos), pero
+construida directamente sobre ECS estándar, sin costo adicional por el propio
+servicio — solo se paga por los recursos de cómputo (Fargate) y networking
+subyacentes.
+
+### Pasos del despliegue
+
+1. Creación de un repositorio privado en **Amazon ECR**.
+2. Etiquetado (`docker tag`) y subida (`docker push`) de la imagen local al
+   repositorio de ECR.
+3. Creación de un servicio con **ECS Express Mode**, especificando la imagen
+   de ECR, el puerto (`8000`) y el tamaño de recursos (`0.25 vCPU / 0.5 GB`).
+4. AWS aprovisionó automáticamente el balanceador de carga y una URL pública.
+
+### Verificación en producción
+
+Se confirmó que la API responde de forma idéntica en la nube y en local: una
+misma petición de prueba devolvió exactamente la misma probabilidad de
+cancelación (`0.5515920199080583`) en ambos entornos, validando que el modelo,
+el scaler y el preprocesamiento se comportan de forma consistente end-to-end.
+
+```json
+{
+  "prediccion": 1,
+  "probabilidad": 0.5515920199080583
+}
+```
+
+### Control de costos
+
+- Tamaño de recursos mínimo (`0.25 vCPU / 0.5 GB`) para mantener el costo bajo,
+  al ser un proyecto de portafolio sin tráfico de producción real.
+- Alarma de facturación configurada en CloudWatch (umbral de aviso por correo).
+- El servicio puede escalarse a 0 réplicas cuando no se está usando activamente:
+  ```bash
+  aws ecs update-service --cluster <nombre-del-cluster> \
+    --service churn-prediction-api --desired-count 0 --region us-east-1
+  ```
+
+## Estructura del proyecto
+
+```
+churn-prediction-mlops/
+├── data/
+│   ├── telco_churn.csv          # Dataset original
+│   └── telco_churn_clean.csv    # Dataset limpio (post Fase 1)
+├── notebooks/
+│   ├── 01_eda.ipynb             # Análisis exploratorio
+│   └── 02_training.ipynb        # Entrenamiento y evaluación
+├── model/
+│   ├── model.pkl                # Modelo Random Forest entrenado
+│   ├── scaler.pkl               # StandardScaler ajustado
+│   └── columnas.json            # Orden de columnas esperado por el modelo
+├── api/
+│   ├── model/                   # Copia del modelo usada por la API
+│   ├── main.py                  # Definición de la API (FastAPI)
+│   ├── predictor.py             # Lógica de carga del modelo y predicción
+│   ├── requirements.txt         # Dependencias de la API
+│   ├── Dockerfile               # Imagen Docker de la API
+│   └── .dockerignore
+└── README.md
+```
+
+## Cómo reproducir este proyecto
+
+```bash
+# 1. Clonar el repositorio
+git clone <url-del-repo>
+cd churn-prediction-mlops
+
+# 2. Crear y activar entorno virtual
+python -m venv venv
+venv\Scripts\activate          # Windows
+source venv/bin/activate       # Mac/Linux
+
+# 3. Instalar dependencias
+pip install pandas numpy matplotlib seaborn scikit-learn jupyter joblib
+
+# 4. Ejecutar los notebooks en orden
+jupyter notebook
+# Correr 01_eda.ipynb y luego 02_training.ipynb
+```
+
+### Levantar la API localmente
+
+```bash
+cd api
+pip install -r requirements.txt
+uvicorn main:app --reload
+# Visitar http://127.0.0.1:8000/docs para probarla
+```
+
+### Levantar la API con Docker
+
+```bash
+cd api
+docker build -t churn-prediction-api .
+docker run -p 8000:8000 churn-prediction-api
+# Visitar http://127.0.0.1:8000/docs para probarla
+```
+
+## Próximos pasos
+
+- [x] **Fase 3:** Construir una API con FastAPI que sirva el modelo (`POST /predict`)
+      y contenerizarla con Docker.
+- [x] **Fase 4:** Desplegar el contenedor en AWS (Amazon ECR + ECS Express Mode).
+- [ ] Agregar monitoreo del modelo en producción (detección de degradación).
+- [ ] Automatizar el pipeline con CI/CD (GitHub Actions): build, push a ECR y
+      despliegue automático en cada cambio.
+- [ ] Migrar el entrenamiento a **Amazon SageMaker** (siguiente proyecto del
+      portafolio de MLOps).
+
+---
+*Proyecto desarrollado como parte de un portafolio de Ingeniería en IA/ML y MLOps.*
