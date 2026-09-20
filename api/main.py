@@ -33,7 +33,7 @@ app = FastAPI(
 
 @app.get("/")
 def inicio():
-    return {"mensaje": "API de Churn Prediction activa. Visita /docs para probarla."}
+    return {"mensaje": "API de Churn Prediction activa (v2 - desplegado con CI/CD). Visita /docs para probarla."}
 
 @app.get("/health")
 def health_check():
