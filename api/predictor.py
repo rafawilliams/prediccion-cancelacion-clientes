@@ -1,7 +1,14 @@
+import logging
+import json
 import joblib
 import pandas as pd
 import json
 import os
+from datetime import datetime, timezone
+
+# Configurar el logger
+logger = logging.getLogger("churn_predictor")
+logger.setLevel(logging.INFO)
 
 #ruta a los archivos del modelo
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -61,6 +68,15 @@ def predecir_churn(datos_cliente: dict) -> dict:
     # Realizar la predicción
     prediccion = model.predict(df_preparado)
     probabilidad = model.predict_proba(df_preparado)[:, 1]  # Probabilidad de churn
+
+    # Registro estructurado de la predicción (sin datos personales del cliente)
+    log_entry = {
+        "evento": "prediccion_realizada",
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "prediccion": int(prediccion[0]),
+        "probabilidad": float(probabilidad[0])
+    }
+    logger.info(json.dumps(log_entry))
     
     return {
         "prediccion": int(prediccion[0]),  # Convertir a int para JSON
