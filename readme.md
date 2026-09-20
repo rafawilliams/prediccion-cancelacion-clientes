@@ -181,6 +181,60 @@ el scaler y el preprocesamiento se comportan de forma consistente end-to-end.
     --service churn-prediction-api --desired-count 0 --region us-east-1
   ```
 
+## Fase 5 — CI/CD con GitHub Actions
+
+### Objetivo
+Automatizar por completo el ciclo de despliegue: cada cambio en el código de la
+API (`git push` a `main`) dispara automáticamente la construcción de la imagen,
+su publicación en ECR, y el redespliegue en ECS — sin intervención manual.
+
+### Arquitectura del pipeline
+
+```
+[git push a main]
+        |
+        v
+[GitHub Actions se activa]  <- solo si el cambio afecta la carpeta api/
+        |
+        v
+[Build de la imagen Docker]
+        |
+        v
+[Push a Amazon ECR]
+        |
+        v
+[Forzar redespliegue en ECS]  <- aws ecs update-service --force-new-deployment
+        |
+        v
+[Nueva versión disponible en producción]
+```
+
+### Seguridad: usuario IAM dedicado
+
+Se creó un usuario IAM específico (`github-actions-churn-api`), distinto del
+usuario usado para el despliegue manual, con permisos acotados solo a ECR y
+ECS (en vez de reutilizar credenciales personales de mayor privilegio). Las
+credenciales se almacenan como **Repository Secrets** de GitHub (nunca en el
+código): `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, `AWS_ACCOUNT_ID`.
+
+> **Mejora de seguridad pendiente:** reemplazar la política predefinida
+> `AmazonECS_FullAccess` por una política personalizada de mínimo privilegio,
+> acotada a este repositorio de ECR y este servicio de ECS específicamente.
+
+### Workflow (`.github/workflows/deploy.yml`)
+
+- **Trigger:** `push` a la rama `main`, filtrado a cambios dentro de `api/**`
+  (evita despliegues innecesarios si solo cambian notebooks o documentación).
+- **Pasos:** checkout del código → autenticación con AWS → login en ECR →
+  build y push de la imagen (`:latest`) → redespliegue forzado en ECS.
+
+### Verificación
+
+Se probó el pipeline de extremo a extremo: un cambio en el mensaje de
+bienvenida de la API se subió con `git push`, se construyó y publicó
+automáticamente, y se reflejó en la URL pública sin ejecutar ningún comando
+manual de Docker o AWS CLI.
+
 ## Estructura del proyecto
 
 ```
@@ -202,6 +256,9 @@ churn-prediction-mlops/
 │   ├── requirements.txt         # Dependencias de la API
 │   ├── Dockerfile               # Imagen Docker de la API
 │   └── .dockerignore
+├── .github/
+│   └── workflows/
+│       └── deploy.yml           # Pipeline de CI/CD (build + push + deploy)
 └── README.md
 ```
 
@@ -248,9 +305,9 @@ docker run -p 8000:8000 churn-prediction-api
 - [x] **Fase 3:** Construir una API con FastAPI que sirva el modelo (`POST /predict`)
       y contenerizarla con Docker.
 - [x] **Fase 4:** Desplegar el contenedor en AWS (Amazon ECR + ECS Express Mode).
+- [x] **Fase 5:** Automatizar el pipeline con CI/CD (GitHub Actions): build, push
+      a ECR y despliegue automático en cada cambio.
 - [ ] Agregar monitoreo del modelo en producción (detección de degradación).
-- [ ] Automatizar el pipeline con CI/CD (GitHub Actions): build, push a ECR y
-      despliegue automático en cada cambio.
 - [ ] Migrar el entrenamiento a **Amazon SageMaker** (siguiente proyecto del
       portafolio de MLOps).
 
