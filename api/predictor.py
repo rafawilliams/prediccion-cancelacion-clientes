@@ -1,4 +1,5 @@
 import logging
+import sys
 import json
 import joblib
 import pandas as pd
@@ -22,6 +23,15 @@ scaler = joblib.load(SCALER_PATH)
 
 with open(COLUMNS_PATH, 'r') as f:
     columnas_esperadas = json.load(f)
+
+
+if not logger.handlers:
+    handler = logging.StreamHandler(sys.stdout)
+    formatter = logging.Formatter('%(message)s')
+    handler.setFormatter(formatter)
+    logger.addHandler(handler)
+    logger.propagate = False
+
 
 
 def preparar_datos(datos_cliente: dict) -> pd.DataFrame:
