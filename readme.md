@@ -2,10 +2,13 @@
 
 Proyecto de Machine Learning end-to-end que predice si un cliente cancelará un
 servicio, como parte de un portafolio profesional de **Ingeniería en IA/ML y MLOps**.
-Incluye análisis de datos, entrenamiento de modelos, una API contenerizada y
-**desplegada en producción en AWS**.
+Incluye análisis de datos, entrenamiento de modelos, una API contenerizada,
+desplegada en AWS y gestionada como Infraestructura como Código con Terraform.
 
-🔗 **API en vivo:** https://ch-3feaaa7b7cb14cf9802bcf6772cb2b1a.ecs.us-east-1.on.aws/docs
+> **Nota sobre el despliegue:** la infraestructura se crea y destruye bajo demanda
+> con Terraform (`terraform apply` / `terraform destroy`) para controlar costos,
+> por lo que la URL pública cambia en cada creación. Ver la sección
+> [Cómo desplegar la infraestructura](#cómo-desplegar-la-infraestructura).
 
 ## Objetivo del proyecto
 
@@ -235,6 +238,57 @@ bienvenida de la API se subió con `git push`, se construyó y publicó
 automáticamente, y se reflejó en la URL pública sin ejecutar ningún comando
 manual de Docker o AWS CLI.
 
+## Fase 7 — Infraestructura como Código (IaC) con Terraform
+
+📁 Código: [`infra/`](infra/)
+
+### Motivación
+
+Durante el despliegue manual (Fase 4), eliminar por completo la infraestructura
+(servicio ECS Express + ALB + security groups asociados) requería recordar y
+ejecutar comandos específicos (`delete-express-gateway-service`, distinto del
+`delete-service` estándar de ECS). Un olvido de este tipo derivó en un gasto
+no controlado. Terraform resuelve esto: describe toda la infraestructura como
+código versionado, y su archivo de estado (`terraform.tfstate`) lleva registro
+exacto de qué se creó, de modo que un solo comando crea o destruye todo el
+conjunto sin dejar recursos huérfanos.
+
+### Recursos gestionados
+
+- `aws_iam_role` (x2): rol de ejecución de tareas y rol de infraestructura
+  requerido por ECS Express Mode.
+- `aws_iam_role_policy_attachment` (x2): políticas administradas asociadas a
+  cada rol.
+- `aws_ecs_express_gateway_service`: el servicio en sí, referenciando la
+  imagen publicada en Amazon ECR, con `cpu = 256`, `memory = 512` y
+  `health_check_path = "/health"`.
+
+### Ciclo de trabajo
+
+```bash
+cd infra
+terraform init      # descarga el provider de AWS (una sola vez)
+terraform validate  # valida sintaxis y nombres de atributos, sin tocar AWS
+terraform plan       # previsualiza qué se va a crear/cambiar/destruir
+terraform apply      # crea la infraestructura real y muestra la URL pública
+terraform destroy    # elimina todo el conjunto de recursos de una sola vez
+```
+
+### Verificación del ciclo completo
+
+Se ejecutó `terraform apply` (5 recursos creados) seguido de `terraform destroy`
+(5 recursos eliminados, sin recursos huérfanos), confirmando que Terraform
+gestiona correctamente la cadena completa de dependencias — incluyendo el
+tiempo de espera propio del *deregistration delay* del ALB (~5-8 minutos) al
+destruir el servicio.
+
+### Próxima mejora: modularización
+
+El código vive actualmente en un único archivo `main.tf`. Está planeada su
+refactorización a un módulo reutilizable (`modules/ecs-express-service/`),
+de forma que pueda reutilizarse para desplegar otros proyectos del portafolio
+(por ejemplo, el proyecto de detección de fraude) sin duplicar código.
+
 ## Estructura del proyecto
 
 ```
@@ -259,6 +313,9 @@ churn-prediction-mlops/
 ├── .github/
 │   └── workflows/
 │       └── deploy.yml           # Pipeline de CI/CD (build + push + deploy)
+├── infra/
+│   ├── main.tf                  # Infraestructura de AWS como código (Terraform)
+│   └── .gitignore                # Excluye .terraform/ y *.tfstate
 └── README.md
 ```
 
@@ -300,6 +357,22 @@ docker run -p 8000:8000 churn-prediction-api
 # Visitar http://127.0.0.1:8000/docs para probarla
 ```
 
+### Cómo desplegar la infraestructura
+
+La infraestructura en AWS se gestiona con Terraform y se crea/destruye bajo
+demanda (ver [Fase 7](#fase-7--infraestructura-como-código-iac-con-terraform)):
+
+```bash
+cd infra
+terraform init
+terraform plan
+terraform apply    # escribir "yes" para confirmar
+# La URL pública se imprime al final como output "api_url"
+
+# Cuando ya no se necesite el servicio activo:
+terraform destroy  # escribir "yes" para confirmar
+```
+
 ## Próximos pasos
 
 - [x] **Fase 3:** Construir una API con FastAPI que sirva el modelo (`POST /predict`)
@@ -307,7 +380,13 @@ docker run -p 8000:8000 churn-prediction-api
 - [x] **Fase 4:** Desplegar el contenedor en AWS (Amazon ECR + ECS Express Mode).
 - [x] **Fase 5:** Automatizar el pipeline con CI/CD (GitHub Actions): build, push
       a ECR y despliegue automático en cada cambio.
-- [ ] Agregar monitoreo del modelo en producción (detección de degradación).
+- [ ] **Fase 6:** Monitoreo del modelo en producción — logging estructurado de
+      predicciones agregado; verificación en CloudWatch y métricas de *drift*
+      pendientes.
+- [x] **Fase 7:** Gestionar la infraestructura como código con Terraform
+      (creación y destrucción reproducible, sin recursos huérfanos).
+- [ ] Modularizar el código de Terraform para reutilizarlo en otros proyectos
+      del portafolio.
 - [ ] Migrar el entrenamiento a **Amazon SageMaker** (siguiente proyecto del
       portafolio de MLOps).
 

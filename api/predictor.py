@@ -2,7 +2,6 @@ import logging
 import json
 import joblib
 import pandas as pd
-import json
 import os
 from datetime import datetime, timezone
 
@@ -22,7 +21,7 @@ model = joblib.load(MODEL_PATH)
 scaler = joblib.load(SCALER_PATH)
 
 with open(COLUMNS_PATH, 'r') as f:
-    columnas = json.load(f)
+    columnas_esperadas = json.load(f)
 
 
 def preparar_datos(datos_cliente: dict) -> pd.DataFrame:
@@ -37,19 +36,15 @@ def preparar_datos(datos_cliente: dict) -> pd.DataFrame:
     """
     # Convertir el diccionario a DataFrame
     df_clientes = pd.DataFrame([datos_cliente])
-    
+
+    df_encoded = pd.get_dummies(df_clientes)
+    df_encoded = df_encoded.reindex(columns=columnas_esperadas, fill_value=0)
     # Asegurarse de que todas las columnas estén presentes
-    for col in columnas:
-        if col not in df_clientes.columns:
-            df_clientes[col] = 0  # Asignar 0 a las columnas faltantes
     
-    # Reordenar las columnas según el orden original
-    df = df_clientes[columnas]
-    
-    # Escalar los datos
-    df_scaled = scaler.transform(df)
-    
-    return pd.DataFrame(df_scaled, columns=columnas)
+    df_encoded = df_encoded.copy()
+
+    df_scaled = scaler.transform(df_encoded)
+    return df_scaled
 
 
 def predecir_churn(datos_cliente: dict) -> dict:
