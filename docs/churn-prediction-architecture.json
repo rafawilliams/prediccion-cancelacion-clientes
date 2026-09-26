@@ -1,0 +1,291 @@
+{
+  "schema_version": 2,
+  "diagram_type": "workflow",
+  "meta": {
+    "title": "Customer Churn Prediction · MLOps",
+    "quality_profile": "showcase",
+    "views": [
+      {
+        "id": "datos-a-modelo",
+        "label": "Datos → Modelo",
+        "focus": [
+          "raw_data",
+          "eda_clean",
+          "train_select"
+        ],
+        "note": "Del dataset crudo de Kaggle al modelo Random Forest entrenado."
+      },
+      {
+        "id": "modelo-a-api",
+        "label": "Modelo → API",
+        "focus": [
+          "train_select",
+          "api_docker"
+        ],
+        "note": "Los artefactos entrenados se sirven detrás de un endpoint FastAPI contenerizado."
+      },
+      {
+        "id": "cicd",
+        "label": "CI/CD automático",
+        "focus": [
+          "api_docker",
+          "gh_actions",
+          "ecr",
+          "ecs"
+        ],
+        "note": "Cada push a main que toca api/ construye la imagen, la sube a ECR y fuerza el redespliegue en ECS."
+      },
+      {
+        "id": "iac",
+        "label": "Infraestructura como código",
+        "focus": [
+          "terraform",
+          "ecs"
+        ],
+        "note": "Terraform, con el módulo reutilizable ecs-express-service, crea y destruye el servicio y sus roles IAM."
+      },
+      {
+        "id": "operacion",
+        "label": "Consumo y monitoreo",
+        "focus": [
+          "ecs",
+          "client",
+          "cloudwatch"
+        ],
+        "note": "El cliente consume POST /predict y cada predicción queda como log JSON, métrica y alarmas en CloudWatch."
+      }
+    ]
+  },
+  "lanes": [
+    {
+      "id": "datos",
+      "label": "Datos y Entrenamiento"
+    },
+    {
+      "id": "cicd",
+      "label": "API y CI/CD"
+    },
+    {
+      "id": "aws",
+      "label": "AWS us-east-1 · IaC y Monitoreo"
+    },
+    {
+      "id": "cliente",
+      "label": "Cliente"
+    }
+  ],
+  "groups": [],
+  "mainPath": [
+    "raw_data",
+    "eda_clean",
+    "train_select",
+    "api_docker",
+    "gh_actions",
+    "ecr",
+    "ecs",
+    "client"
+  ],
+  "nodes": [
+    {
+      "id": "raw_data",
+      "lane": "datos",
+      "col": 0,
+      "width": 116,
+      "type": "external",
+      "label": "Dataset Crudo",
+      "sublabel": "Telco Churn · Kaggle"
+    },
+    {
+      "id": "eda_clean",
+      "lane": "datos",
+      "col": 1,
+      "width": 116,
+      "type": "backend",
+      "label": "EDA + Limpieza",
+      "sublabel": "01_eda.ipynb",
+      "tag": "-11 filas nulas"
+    },
+    {
+      "id": "train_select",
+      "lane": "datos",
+      "col": 2,
+      "width": 116,
+      "type": "backend",
+      "label": "Entrenamiento",
+      "sublabel": "02_training.ipynb",
+      "tag": "Random Forest · recall 80.75%"
+    },
+    {
+      "id": "api_docker",
+      "lane": "cicd",
+      "col": 2,
+      "width": 126,
+      "type": "backend",
+      "label": "API FastAPI",
+      "sublabel": "predictor.py + main.py",
+      "tag": "POST /predict · Docker",
+      "brand": "fastapi"
+    },
+    {
+      "id": "gh_actions",
+      "lane": "cicd",
+      "col": 3,
+      "width": 126,
+      "type": "backend",
+      "label": "GitHub Actions",
+      "sublabel": "deploy.yml",
+      "tag": "build · push · redeploy",
+      "brand": "github-actions"
+    },
+    {
+      "id": "terraform",
+      "lane": "aws",
+      "col": 3,
+      "width": 126,
+      "type": "cloud",
+      "label": "Terraform",
+      "sublabel": "infra/main.tf",
+      "tag": "ecs-express-service",
+      "brand": "terraform"
+    },
+    {
+      "id": "ecr",
+      "lane": "cicd",
+      "col": 4,
+      "width": 116,
+      "type": "cloud",
+      "label": "Amazon ECR",
+      "sublabel": "churn-prediction-api"
+    },
+    {
+      "id": "ecs",
+      "lane": "aws",
+      "col": 4,
+      "width": 116,
+      "type": "cloud",
+      "label": "ECS Express Mode",
+      "sublabel": "Fargate 0.25 vCPU",
+      "tag": "URL pública"
+    },
+    {
+      "id": "cloudwatch",
+      "lane": "aws",
+      "col": 5,
+      "width": 116,
+      "type": "cloud",
+      "label": "CloudWatch",
+      "sublabel": "métrica PrediccionValue",
+      "tag": "2 alarmas de drift"
+    },
+    {
+      "id": "client",
+      "lane": "cliente",
+      "col": 4,
+      "width": 116,
+      "type": "frontend",
+      "label": "Cliente HTTP",
+      "sublabel": "App consumidora"
+    }
+  ],
+  "edges": [
+    {
+      "from": "raw_data",
+      "to": "eda_clean",
+      "label": "carga"
+    },
+    {
+      "from": "eda_clean",
+      "to": "train_select",
+      "label": "dataset limpio"
+    },
+    {
+      "from": "train_select",
+      "to": "api_docker",
+      "label": "artefactos entrenados",
+      "variant": "emphasis",
+      "fromSide": "bottom",
+      "toSide": "top",
+      "labelAt": [
+        520,
+        183
+      ]
+    },
+    {
+      "from": "api_docker",
+      "to": "gh_actions",
+      "label": "git push main"
+    },
+    {
+      "from": "gh_actions",
+      "to": "ecr",
+      "label": "docker push"
+    },
+    {
+      "from": "ecr",
+      "to": "ecs",
+      "label": "imagen :latest",
+      "fromSide": "bottom",
+      "toSide": "top",
+      "labelAt": [
+        905,
+        305
+      ]
+    },
+    {
+      "from": "terraform",
+      "to": "ecs",
+      "label": "provisiona",
+      "variant": "dashed",
+      "fromSide": "right",
+      "toSide": "left"
+    },
+    {
+      "from": "ecs",
+      "to": "client",
+      "label": "POST /predict",
+      "variant": "emphasis",
+      "fromSide": "bottom",
+      "toSide": "top",
+      "labelAt": [
+        905,
+        439
+      ]
+    },
+    {
+      "from": "ecs",
+      "to": "cloudwatch",
+      "label": "logs JSON",
+      "role": "async",
+      "fromSide": "right",
+      "toSide": "left"
+    }
+  ],
+  "cards": [
+    {
+      "dot": "emerald",
+      "title": "Modelo en producción",
+      "items": [
+        "Random Forest · recall 80.75%",
+        "Misma predicción en local y en AWS",
+        "Escala a 0 réplicas (costos)"
+      ]
+    },
+    {
+      "dot": "cyan",
+      "title": "MLOps implementado",
+      "items": [
+        "CI/CD con IAM de mínimo privilegio",
+        "Alarmas de drift en CloudWatch",
+        "Terraform modular · plan sin cambios"
+      ]
+    },
+    {
+      "dot": "amber",
+      "title": "Próximos pasos",
+      "items": [
+        "Entrenamiento en Amazon SageMaker",
+        "Data drift (KS / PSI) con Evidently AI"
+      ]
+    }
+  ]
+}
