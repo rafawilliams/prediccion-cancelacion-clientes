@@ -28,7 +28,7 @@ class ClienteInput(BaseModel):
 app = FastAPI(
     title="API de Predicción de Cancelación de Clientes",
     description="Predice la probabilidad de que un cliente cancele un servicio.",
-    version="1.0.0"
+    version="1.0.1"
 )
 
 @app.get("/")
