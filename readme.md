@@ -220,9 +220,54 @@ ECS (en vez de reutilizar credenciales personales de mayor privilegio). Las
 credenciales se almacenan como **Repository Secrets** de GitHub (nunca en el
 código): `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, `AWS_ACCOUNT_ID`.
 
-> **Mejora de seguridad pendiente:** reemplazar la política predefinida
-> `AmazonECS_FullAccess` por una política personalizada de mínimo privilegio,
-> acotada a este repositorio de ECR y este servicio de ECS específicamente.
+> **Mejora de seguridad aplicada — mínimo privilegio:** la política
+> predefinida `AmazonECS_FullAccess` (acceso a *cualquier* servicio ECS de la
+> cuenta) fue reemplazada por una política personalizada, acotada
+> exclusivamente al repositorio ECR y al servicio ECS de este proyecto:
+>
+> ```json
+> {
+>   "Version": "2012-10-17",
+>   "Statement": [
+>     {
+>       "Sid": "ECRAuth",
+>       "Effect": "Allow",
+>       "Action": "ecr:GetAuthorizationToken",
+>       "Resource": "*"
+>     },
+>     {
+>       "Sid": "ECRPushChurnApiOnly",
+>       "Effect": "Allow",
+>       "Action": [
+>         "ecr:BatchCheckLayerAvailability",
+>         "ecr:GetDownloadUrlForLayer",
+>         "ecr:BatchGetImage",
+>         "ecr:PutImage",
+>         "ecr:InitiateLayerUpload",
+>         "ecr:UploadLayerPart",
+>         "ecr:CompleteLayerUpload"
+>       ],
+>       "Resource": "arn:aws:ecr:us-east-1:504556110660:repository/churn-prediction-api"
+>     },
+>     {
+>       "Sid": "ECSDeployChurnApiOnly",
+>       "Effect": "Allow",
+>       "Action": [
+>         "ecs:UpdateService",
+>         "ecs:DescribeServices"
+>       ],
+>       "Resource": "arn:aws:ecs:us-east-1:504556110660:service/default/churn-prediction-api"
+>     }
+>   ]
+> }
+> ```
+>
+> `ecr:GetAuthorizationToken` requiere `Resource: "*"` por diseño de AWS (no
+> soporta restricción a nivel de recurso), pero las demás acciones están
+> acotadas al ARN exacto del repositorio y del servicio de este proyecto — el
+> usuario `github-actions-churn-api` no puede tocar ningún otro recurso de
+> ECR o ECS en la cuenta. Validado con un despliegue real tras el cambio:
+> el pipeline completó el ciclo build → push → redespliegue sin fricciones.
 
 ### Workflow (`.github/workflows/deploy.yml`)
 
@@ -523,7 +568,7 @@ terraform destroy  # escribir "yes" para confirmar
       cambios (0 to add, 0 to change, 0 to destroy) sobre la infraestructura
       ya desplegada, listo para reutilizarse en el proyecto de detección de
       fraude.
-- [ ] Reemplazar `AmazonECS_FullAccess` por una política de IAM de mínimo
+- [x] Reemplazar `AmazonECS_FullAccess` por una política de IAM de mínimo
       privilegio para el usuario de GitHub Actions (ver nota en Fase 5).
 - [ ] Migrar el entrenamiento a **Amazon SageMaker** (siguiente proyecto del
       portafolio de MLOps).
