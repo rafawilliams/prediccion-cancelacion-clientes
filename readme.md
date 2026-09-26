@@ -247,7 +247,7 @@ código): `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, `AWS_ACCOUNT_ID`.
 >         "ecr:UploadLayerPart",
 >         "ecr:CompleteLayerUpload"
 >       ],
->       "Resource": "arn:aws:ecr:us-east-1:504556110660:repository/churn-prediction-api"
+>       "Resource": "arn:aws:ecr:us-east-1:<AWS_ACCOUNT_ID>:repository/churn-prediction-api"
 >     },
 >     {
 >       "Sid": "ECSDeployChurnApiOnly",
@@ -256,7 +256,7 @@ código): `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, `AWS_ACCOUNT_ID`.
 >         "ecs:UpdateService",
 >         "ecs:DescribeServices"
 >       ],
->       "Resource": "arn:aws:ecs:us-east-1:504556110660:service/default/churn-prediction-api"
+>       "Resource": "arn:aws:ecs:us-east-1:<AWS_ACCOUNT_ID>:service/default/churn-prediction-api"
 >     }
 >   ]
 > }
