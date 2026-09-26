@@ -339,12 +339,83 @@ gestiona correctamente la cadena completa de dependencias — incluyendo el
 tiempo de espera propio del *deregistration delay* del ALB (~5-8 minutos) al
 destruir el servicio.
 
-### Próxima mejora: modularización
+## Fase 8 — Modularización de Terraform
 
-El código vive actualmente en un único archivo `main.tf`. Está planeada su
-refactorización a un módulo reutilizable (`modules/ecs-express-service/`),
-de forma que pueda reutilizarse para desplegar otros proyectos del portafolio
-(por ejemplo, el proyecto de detección de fraude) sin duplicar código.
+### Motivación
+
+El código de la Fase 7 vivía en un único archivo `main.tf`, con los recursos
+de AWS escritos "a mano" para este proyecto específico. Esto funciona, pero no
+escala: el siguiente proyecto del portafolio (detección de fraude) también
+necesitará un servicio en ECS Express Mode con la misma forma general (roles
+de IAM, política de ejecución, servicio con imagen de contenedor). Sin un
+módulo, habría que copiar y pegar el mismo bloque de código y mantenerlo
+duplicado en dos lugares.
+
+Un **módulo de Terraform** resuelve esto igual que una función en programación:
+se define una sola vez la lógica genérica, y cada proyecto la invoca pasándole
+sus propios parámetros (nombre del servicio, imagen de Docker, tamaño de
+recursos), en vez de duplicar el código.
+
+### Estructura del módulo
+
+```
+infra/
+├── main.tf                          # Entry point: invoca el módulo con los
+│                                     # parámetros específicos de este proyecto
+└── modules/
+    └── ecs-express-service/
+        ├── variables.tf              # Parámetros de entrada del módulo
+        │                             # (service_name, image_uri, cpu, memory, etc.)
+        ├── main.tf                   # Recursos de AWS, parametrizados con var.*
+        └── outputs.tf                # Valores que el módulo expone hacia afuera
+                                       # (api_url)
+```
+
+El `main.tf` raíz quedó como un simple punto de entrada:
+
+```hcl
+module "churn_api" {
+  source = "./modules/ecs-express-service"
+
+  service_name   = "churn-prediction-api"
+  image_uri      = "<cuenta>.dkr.ecr.us-east-1.amazonaws.com/churn-prediction-api:latest"
+  container_port = 8000
+  cpu            = 256
+  memory         = 512
+}
+```
+
+### El riesgo de refactorizar infraestructura viva (y cómo se validó)
+
+Terraform no identifica los recursos por su nombre en el código, sino por una
+**dirección** guardada en su archivo de estado (`terraform.tfstate`) — por
+ejemplo, `aws_ecs_express_gateway_service.churn_api`. Al mover ese mismo
+recurso dentro de un módulo, su dirección cambia a
+`module.churn_api.aws_ecs_express_gateway_service.this`. Si esa nueva
+dirección no coincide con lo que ya existe en el estado, Terraform interpreta
+que el recurso original "desapareció" y el nuevo "no existe todavía" — y
+propone **destruir el que está en producción y crear uno desde cero**
+(con el consiguiente tiempo de inactividad y una nueva URL pública).
+
+Para evitar esto, la validación se hizo en dos pasos, sin aplicar ningún
+cambio hasta confirmar que era seguro:
+
+1. `terraform plan` tras la refactorización mostró inicialmente
+   `Plan: 5 to add, 0 to change, 5 to destroy` — la señal de alerta esperada.
+2. Se identificó la causa raíz con `terraform state list` y el detalle del
+   plan (`terraform plan -no-color`): no era un problema de direcciones (el
+   estado ya usaba las rutas del módulo), sino una inconsistencia de nombres
+   entre el código nuevo y los recursos ya desplegados (`service_name` y los
+   nombres de los roles de IAM no coincidían exactamente). Al corregir esos
+   nombres para que coincidieran con los recursos reales, `terraform plan`
+   pasó a mostrar:
+   ```
+   Plan: 0 to add, 0 to change, 0 to destroy.
+   ```
+
+Esto confirma que la refactorización fue "invisible" para AWS: mismo
+servicio, misma URL pública, cero tiempo de inactividad — únicamente cambió
+cómo está organizado el código.
 
 ## Estructura del proyecto
 
@@ -371,7 +442,12 @@ churn-prediction-mlops/
 │   └── workflows/
 │       └── deploy.yml           # Pipeline de CI/CD (build + push + deploy)
 ├── infra/
-│   ├── main.tf                  # Infraestructura de AWS como código (Terraform)
+│   ├── main.tf                  # Entry point: invoca el módulo reutilizable
+│   ├── modules/
+│   │   └── ecs-express-service/
+│   │       ├── variables.tf     # Parámetros de entrada del módulo
+│   │       ├── main.tf          # Recursos de AWS, parametrizados
+│   │       └── outputs.tf       # Valores expuestos por el módulo (api_url)
 │   └── .gitignore                # Excluye .terraform/ y *.tfstate
 └── README.md
 ```
@@ -442,8 +518,13 @@ terraform destroy  # escribir "yes" para confirmar
       de predicciones, como proxy de *model/data drift*).
 - [x] **Fase 7:** Gestionar la infraestructura como código con Terraform
       (creación y destrucción reproducible, sin recursos huérfanos).
-- [ ] Modularizar el código de Terraform para reutilizarlo en otros proyectos
-      del portafolio.
+- [x] **Fase 8:** Modularizar el código de Terraform
+      (`modules/ecs-express-service/`), validado con `terraform plan` sin
+      cambios (0 to add, 0 to change, 0 to destroy) sobre la infraestructura
+      ya desplegada, listo para reutilizarse en el proyecto de detección de
+      fraude.
+- [ ] Reemplazar `AmazonECS_FullAccess` por una política de IAM de mínimo
+      privilegio para el usuario de GitHub Actions (ver nota en Fase 5).
 - [ ] Migrar el entrenamiento a **Amazon SageMaker** (siguiente proyecto del
       portafolio de MLOps).
 
