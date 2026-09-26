@@ -11,11 +11,16 @@ provider "aws" {
   region = "us-east-1"
 }
 
+# La URL del repositorio se resuelve en AWS para no dejar el ID de cuenta en el código
+data "aws_ecr_repository" "api" {
+  name = "churn-prediction-api"
+}
+
 module "churn-prediction-api" {
   source = "./modules/ecs-express-service"
 
   service_name   = "churn-prediction-api"
-  image_uri      = "504556110660.dkr.ecr.us-east-1.amazonaws.com/churn-prediction-api:latest"
+  image_uri      = "${data.aws_ecr_repository.api.repository_url}:latest"
   container_port = 8000
   cpu            = 256
   memory         = 512
