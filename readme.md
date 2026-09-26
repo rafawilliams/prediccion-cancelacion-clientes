@@ -238,6 +238,63 @@ bienvenida de la API se subió con `git push`, se construyó y publicó
 automáticamente, y se reflejó en la URL pública sin ejecutar ningún comando
 manual de Docker o AWS CLI.
 
+## Fase 6 — Monitoreo del modelo en producción
+
+### Motivación
+
+Un modelo entrenado con datos de un momento dado puede volverse menos preciso
+con el tiempo a medida que el comportamiento real de los clientes cambia
+(*model drift* / *data drift*), sin que esto produzca ningún error visible —
+solo predicciones cada vez menos confiables. Este enfoque implementa un
+monitoreo ligero, basado en la infraestructura ya existente (CloudWatch), que
+sirve como señal indirecta y económica de ese fenómeno.
+
+### Logging estructurado (`predictor.py`)
+
+Cada llamada a `predecir_churn()` registra un evento en formato JSON:
+
+```json
+{"evento": "prediccion_realizada", "timestamp": "2026-...", "prediccion": 1, "probabilidad": 0.5516}
+```
+
+- Deliberadamente **no** incluye los datos del cliente (por privacidad):
+  solo el resultado de la predicción.
+- El logger usa un `StreamHandler(sys.stdout)` explícito — necesario para que
+  ECS/Fargate capture la salida del contenedor y la envíe automáticamente a
+  CloudWatch Logs (un logger sin handler configurado no emite nada visible).
+
+### Métrica personalizada en CloudWatch
+
+Se creó un **metric filter** sobre el log group del servicio:
+
+- **Patrón:** `{ $.evento = "prediccion_realizada" }`
+- **Namespace:** `ChurnPredictionAPI`
+- **Métrica:** `PrediccionValue` — extrae `$.prediccion` (0 o 1) de cada log
+
+Esto convierte cada predicción registrada en un punto de datos graficable,
+sin necesidad de una base de datos ni un servicio adicional.
+
+### Alarmas configuradas
+
+Dos alarmas sobre el promedio horario (`Average`, período de 1 hora) de
+`PrediccionValue`, usadas como señal de que el comportamiento del modelo
+se desvió del ~26.5% de cancelación observado en el dataset de entrenamiento:
+
+| Alarma | Condición | Qué podría indicar |
+|---|---|---|
+| `churn-api-prediccion-promedio-alto` | Promedio > 0.6 | El modelo marca muchos más clientes como riesgo de lo esperado |
+| `churn-api-prediccion-promedio-bajo` | Promedio < 0.05 | El modelo casi no detecta cancelaciones (posible falla en el pipeline de datos, no solo *drift*) |
+
+### Alcance y limitación reconocida
+
+Este enfoque detecta cambios en la **distribución de las predicciones del
+modelo**, un proxy razonable y de bajo costo para *drift*, pero no equivale a
+un monitoreo estadístico riguroso de *data drift* (que compararía las
+distribuciones de las variables de entrada contra las del entrenamiento, con
+pruebas como Kolmogorov-Smirnov o PSI). Ese nivel más avanzado queda como
+mejora futura, previsiblemente con una herramienta especializada como
+**Evidently AI**.
+
 ## Fase 7 — Infraestructura como Código (IaC) con Terraform
 
 📁 Código: [`infra/`](infra/)
@@ -380,9 +437,9 @@ terraform destroy  # escribir "yes" para confirmar
 - [x] **Fase 4:** Desplegar el contenedor en AWS (Amazon ECR + ECS Express Mode).
 - [x] **Fase 5:** Automatizar el pipeline con CI/CD (GitHub Actions): build, push
       a ECR y despliegue automático en cada cambio.
-- [ ] **Fase 6:** Monitoreo del modelo en producción — logging estructurado de
-      predicciones agregado; verificación en CloudWatch y métricas de *drift*
-      pendientes.
+- [x] **Fase 6:** Monitoreo del modelo en producción (logging estructurado,
+      métrica personalizada en CloudWatch y alarmas sobre la distribución
+      de predicciones, como proxy de *model/data drift*).
 - [x] **Fase 7:** Gestionar la infraestructura como código con Terraform
       (creación y destrucción reproducible, sin recursos huérfanos).
 - [ ] Modularizar el código de Terraform para reutilizarlo en otros proyectos
